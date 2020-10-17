@@ -14,16 +14,9 @@ from time import time
 from skimage import measure
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from mayavi import mlab
-import concurrent.futures
-
-import plotly.graph_objects as go
-import plotly.figure_factory as ff
-import plotly.express as px
-from plotly.subplots import make_subplots
-import chart_studio.plotly as py
-import plotly.io as pio
 
 
+%matplotlib notebook
 
 fig = plt.figure();
 ax = fig.gca(projection='3d');
@@ -89,6 +82,17 @@ def torus51z(t):
     return -1 * np.sin(t)
 def torus51num(t):
     return 25 * np.cos(t) ** 2 + 100 * np.cos(t) + 101
+
+#Parametrization of the "Number 8" knot, which is an unknot with a twist (not the same as the Figure 8 Knot)
+
+def num8num(t):
+    return 2.52 + 2 * np.cos(4 * t) - 0.48 * np.cos(2 * t)
+def num8x(t):
+    return np.cos(t)
+def num8y(t):
+    return np.sin(2*t)
+def num8z(t):
+    return 0.2 * np.sin(t)
 
 #Cinquefoil knot AKA (5,2) torus knot
 def cinquenum(t):
@@ -161,6 +165,9 @@ def potential(a,b,c,knottype):
     elif knottype == "torus51":
         ans, _ = integrate.fixed_quad(lambda t: np.sqrt(torus51num(t))/(((a - torus51x(t)) ** 2 + (b - torus51y(t)) ** 2 + (c - torus51z(t)) ** 2) ** (1/2)),0, 2*np.pi, n = quadorder)
         return ans
+    elif knottype == "num8":
+        ans, _ = integrate.fixed_quad(lambda t: np.sqrt(num8num(t))/(((a - num8x(t)) ** 2 + (b - num8y(t)) ** 2 + (c - num8z(t)) ** 2) ** (1/2)),0, 2*np.pi, n = quadorder)
+        return ans
     elif knottype == "cinque":
         ans, _ = integrate.fixed_quad(lambda t: np.sqrt(cinquenum(t))/(((a - cinquex(t)) ** 2 + (b - cinquey(t)) ** 2 + (c - cinquez(t)) ** 2) ** (1/2)),0, 2*np.pi, n = quadorder)
         return ans
@@ -195,6 +202,10 @@ ptrefz = trefz(t)
 pfig8x = fig8x(t)
 pfig8y = fig8y(t)
 pfig8z = fig8z(t)
+
+pnum8x = num8x(t)
+pnum8y = num8y(t)
+pnum8z = num8z(t)
 
 ptorus31x = torus31x(t)
 ptorus31y = torus31y(t)
@@ -234,6 +245,8 @@ def getpts(knottype):
         return pfig8x, pfig8y, pfig8z
     elif knottype == "torus31":
         return ptorus31x, ptorus31y, ptorus31z
+    elif knottype == "num8":
+        return pnum8x, pnum8y, pnum8z
     elif knottype == "torus51":
         return ptorus51x, ptorus51y, ptorus51z
     elif knottype == "cinque":
@@ -248,6 +261,12 @@ def getpts(knottype):
         return pendlessx, pendlessy, pendlessz
     else:
         return None, None, None
+
+
+        
+def getnppts(knottype, t):
+    ptx, pty, ptz = getpts(knottype, t)
+    return np.array([ptx, pty, ptz])
 
 #Plot a level potential surface with the quadrature method of evaluation
 
@@ -267,7 +286,65 @@ def showsurface(verts, faces, colormap = 'Blues'):
     mlab.triangular_mesh(verts[:,0], verts[:,1], verts[:,2], faces, colormap=colormap)
     mlab.show()
     return None
+    
+#My second attempt at fixing the tube breakage for relatively high potential
+#It just overlays a thin tube surrounding the knot. Dubious as to the justification, but still reflects reality.
 
+def distK(x, knottype):
+    px, py, pz = getpts(knottype)
+    d = None
+    for i in range(numknotpts):
+        if d is None:
+            d = np.norm(x - np.array([px[i],py[i],pz[i]]))
+        else:
+            newd = np.norm(x - np.array([px[i],py[i],pz[i]]))
+            if newd < d:
+                d = newd
+    return d
+    
+    
+ 
+#My third attempt at fixing tube breakage: Same as the second, but explicitly parametrized
+
+h = 10e-6 
+#Directly coding all the derivative formulas exactly would be tedious and yield little gain
+def gettangentvector(knottype, t):
+    rx, ry, rz = getpts(knottype, t)
+    r = np.array([rx, ry, rz])
+    rhx, rhy, rhz = getpts(knottype, t + h)
+    rh = np.array([rhx, rhy, rhz])
+    tangent = (rh - r) / h
+    return tangent / np.linalg.norm(tangent)
+    
+#Returns approximations for the second derivatives of the parametrization functions
+def getnormalvector(knottype, t):
+    rpx, rpy , rpz = getpts(knottype, t + h)
+    rx, ry, rz = getpts(knottype, t)
+    rnx, rny, rnz = getpts(knottype, t - h)
+    
+    ax = (rpx - 2 * rx + rnx) / (h ** 2)
+    ay = (rpy - 2 * ry + rny) / (h ** 2)
+    az = (rpz - 2 * rz + rnz) / (h ** 2)
+    
+    return np.array([ax, ay, az]) / (np.linalg.norm(np.array([ax, ay, az])))
+    
+def tube(knottype, radius = 0.05):
+    s = np.linspace(0,2*np.pi, 1000)
+    t = np.linspace(0,2*np.pi, 1000)
+    tGrid, sGrid = np.meshgrid(s,t)
+    
+    rs = getnppts(knottype, t)
+    
+    Ts = gettangentvector(knottype, t)
+    Ns = getnormalvector(knottype, t)
+    Bs = np.cross(Ts.T,Ns.T)
+    
+    Es = np.array([Ts,Ns,Bs])
+    return rs, Ts, Ns, Bs
+    
+    #x = 
+    #y =
+    #z = 
 
 def generateverts(knottype = 'unknot', n = 50, c = globalc):
     domx, domy, domz = makedomain(n)
@@ -281,11 +358,80 @@ def generateverts(knottype = 'unknot', n = 50, c = globalc):
     print("Time taken: ", (t1 - t0), "seconds")
     return verts, faces
     
+#An alternative method for generating the vertices and vaces of Phi(x) = c, 
+#which hopefully wastes less time and space computing useless integrals far away from the knot.
+#Takes many cubes surrounding the knots and runs a smaller marching cubes algorithm, piecing together all the results.
 
-def makesurface(knottype = 'unknot', n = 50, c = None, colormap = 'Blues'):
+#Note: It didn't work. It's longer than the usual surface generation, and the "breaks" in the tube are still there.
+#I'm leaving this here for archival purposes.
+def generateverts2(knottype = 'unknot', n = 50, c = globalc):
+    smalln = 3 * math.ceil(n / 10)
+    #Radius is hardcoded in for now
+    radius = 0.5
+    px, py, pz = getpts(knottype)
+    verts = None
+    faces = None
+    
+    for i in range(math.floor(numknotpts / 10)):
+        #I think this may be where I screwed up,
+        #I should have spaced based on arclength.
+        center = np.array([px[i * 10],py[i * 10], pz[i * 10]])
+        domx, domy, domz = np.mgrid[center[0]-radius:center[0]+radius:smalln*1j, center[1]-radius:center[1]+radius:smalln*1j, center[2]-radius:center[2]+radius:smalln*1j]
+        
+        #domx = np.linspace(center[0] - radius, center[0] + radius, smalln)
+        #domy = np.linspace(center[1] - radius, center[1] + radius, smalln)
+        #domz = np.linspace(center[2] - radius, center[2] + radius, smalln)
+        vol = potential2(domx, domy, domz,knottype)
+        #print(vol)
+        try:
+            newverts, newfaces, _, _ = measure.marching_cubes(vol, c, spacing=(1,1,1))
+            print("Found something!")
+            if verts is None:
+                #If this is the first loop iteration
+                verts = newverts
+                verts = rescaleverts(verts, smalln, center, radius)
+                faces = newfaces
+            else:
+                #If this isn't the first iteration, stack results on the previous results
+                newverts = rescaleverts(newverts, smalln, center, radius)
+                newfaces = rescalefaces(newfaces,verts)
+                verts = np.vstack((verts,newverts))
+                #print(newverts)
+                #print(verts)
+                faces = np.vstack((faces,newfaces))
+        except ValueError:
+            print("Got a ValueError")
+            continue
+            
+    print(verts)
+    print(faces)
+    return verts, faces
+
+#Rescales the results of each of the miniature marching cubes problems surrounding the knot
+def rescaleverts(oldverts, smalln, center, radius):
+
+    corner = center - np.array([radius,radius,radius])
+    print("center: ", center)
+    print("corner: ", corner)
+    
+    scale = 2 * radius / smalln
+    numrows, _ = np.shape(oldverts)
+    newverts = (scale * oldverts) + np.reshape(np.tile(corner, numrows),(numrows,3))
+    #newverts = np.reshape(np.tile(corner,numrows),(numrows, 3))
+    print("scale * oldverts has shape: ",np.shape(scale*oldverts))
+    print("the reshaped tile has shape: ",np.shape(newverts))
+    print("rescaled to ", newverts)
+    return newverts
+
+def rescalefaces(oldfaces, currentverts):
+    numrows, _ = np.shape(currentverts)
+    newfaces = oldfaces + np.full(np.shape(oldfaces), numrows)
+    return newfaces
+
+    
+
+def makesurface(knottype = 'unknot', n = 50, c = globalc, colormap = 'Blues'):
     setc(knottype)
-    if c is None:
-        c = globalc
     verts, faces = generateverts(knottype, n, c)
     showsurface(verts, faces, colormap = colormap)
     return verts, faces
@@ -317,6 +463,10 @@ def efield(a,b,c,knottype):
         Ex, _ = integrate.fixed_quad(lambda t: (a - fig8x(t)) * np.sqrt(fig8num(t))/(((a - fig8x(t)) ** 2 + (b - fig8y(t)) ** 2 + (c - fig8z(t)) ** 2) ** (1.5)),0, 2*np.pi, n = quadorder)
         Ey, _ = integrate.fixed_quad(lambda t: (b - fig8y(t)) * np.sqrt(fig8num(t))/(((a - fig8x(t)) ** 2 + (b - fig8y(t)) ** 2 + (c - fig8z(t)) ** 2) ** (1.5)),0, 2*np.pi, n = quadorder)
         Ez, _ = integrate.fixed_quad(lambda t: (c - fig8z(t)) * np.sqrt(fig8num(t))/(((a - fig8x(t)) ** 2 + (b - fig8y(t)) ** 2 + (c - fig8z(t)) ** 2) ** (1.5)),0, 2*np.pi, n = quadorder)    
+    elif knottype == "num8":
+        Ex, _ = integrate.fixed_quad(lambda t: (a - num8x(t)) * np.sqrt(num8num(t))/(((a - num8x(t)) ** 2 + (b - num8y(t)) ** 2 + (c - num8z(t)) ** 2) ** (1.5)),0, 2*np.pi, n = quadorder)
+        Ey, _ = integrate.fixed_quad(lambda t: (b - num8y(t)) * np.sqrt(num8num(t))/(((a - num8x(t)) ** 2 + (b - num8y(t)) ** 2 + (c - num8z(t)) ** 2) ** (1.5)),0, 2*np.pi, n = quadorder)
+        Ez, _ = integrate.fixed_quad(lambda t: (c - num8z(t)) * np.sqrt(num8num(t))/(((a - num8x(t)) ** 2 + (b - num8y(t)) ** 2 + (c - num8z(t)) ** 2) ** (1.5)),0, 2*np.pi, n = quadorder)    
     elif knottype == "torus31":
         Ex, _ = integrate.fixed_quad(lambda t: (a - torus31x(t)) * np.sqrt(torus31num(t))/(((a - torus31x(t)) ** 2 + (b - torus31y(t)) ** 2 + (c - torus31z(t)) ** 2) ** (1.5)),0, 2*np.pi, n = quadorder)
         Ey, _ = integrate.fixed_quad(lambda t: (b - torus31y(t)) * np.sqrt(torus31num(t))/(((a - torus31x(t)) ** 2 + (b - torus31y(t)) ** 2 + (c - torus31z(t)) ** 2) ** (1.5)),0, 2*np.pi, n = quadorder)
@@ -388,6 +538,12 @@ def JEentries(a,b,c,knottype):
         phixz, _ = integrate.fixed_quad(lambda t: 3 * (torus51x(t) - a) * (torus51z(t) - c) * np.sqrt(torus51num(t))/(((a - torus51x(t)) ** 2 + (b - torus51y(t)) ** 2 + (c - torus51z(t)) ** 2) ** (2.5)),0, 2*np.pi, n = quadorder)
         phiyy, _ = integrate.fixed_quad(lambda t: (-1 * (a - torus51x(t)) ** 2 + 2 * (b - torus51y(t)) ** 2 - (c - torus51z(t)) ** 2 )* np.sqrt(torus51num(t))/(((a - torus51x(t)) ** 2 + (b - torus51y(t)) ** 2 + (c - torus51z(t)) ** 2) ** (2.5)),0, 2*np.pi, n = quadorder)
         phiyz, _ = integrate.fixed_quad(lambda t: 3 * (torus51y(t) - b) * (torus51z(t) - c) * np.sqrt(torus51num(t))/(((a - torus51x(t)) ** 2 + (b - torus51y(t)) ** 2 + (c - torus51z(t)) ** 2) ** (2.5)),0, 2*np.pi, n = quadorder)
+    elif knottype == "num8":
+        phixx, _ = integrate.fixed_quad(lambda t: (2 * (a - num8x(t)) ** 2 - (b - num8y(t)) ** 2 - (c - num8z(t)) ** 2 )* np.sqrt(num8num(t))/(((a - num8x(t)) ** 2 + (b - num8y(t)) ** 2 + (c - num8z(t)) ** 2) ** (2.5)),0, 2*np.pi, n = quadorder)
+        phixy, _ = integrate.fixed_quad(lambda t: 3 * (num8x(t) - a) * (num8y(t) - b) * np.sqrt(num8num(t))/(((a - num8x(t)) ** 2 + (b - num8y(t)) ** 2 + (c - num8z(t)) ** 2) ** (2.5)),0, 2*np.pi, n = quadorder)
+        phixz, _ = integrate.fixed_quad(lambda t: 3 * (num8x(t) - a) * (num8z(t) - c) * np.sqrt(num8num(t))/(((a - num8x(t)) ** 2 + (b - num8y(t)) ** 2 + (c - num8z(t)) ** 2) ** (2.5)),0, 2*np.pi, n = quadorder)
+        phiyy, _ = integrate.fixed_quad(lambda t: (-1 * (a - num8x(t)) ** 2 + 2 * (b - num8y(t)) ** 2 - (c - num8z(t)) ** 2 )* np.sqrt(num8num(t))/(((a - num8x(t)) ** 2 + (b - num8y(t)) ** 2 + (c - num8z(t)) ** 2) ** (2.5)),0, 2*np.pi, n = quadorder)
+        phiyz, _ = integrate.fixed_quad(lambda t: 3 * (num8y(t) - b) * (num8z(t) - c) * np.sqrt(num8num(t))/(((a - num8x(t)) ** 2 + (b - num8y(t)) ** 2 + (c - num8z(t)) ** 2) ** (2.5)),0, 2*np.pi, n = quadorder)
     elif knottype == "cinque":
         phixx, _ = integrate.fixed_quad(lambda t: (2 * (a - cinquex(t)) ** 2 - (b - cinquey(t)) ** 2 - (c - cinquez(t)) ** 2 )* np.sqrt(cinquenum(t))/(((a - cinquex(t)) ** 2 + (b - cinquey(t)) ** 2 + (c - cinquez(t)) ** 2) ** (2.5)),0, 2*np.pi, n = quadorder)
         phixy, _ = integrate.fixed_quad(lambda t: 3 * (cinquex(t) - a) * (cinquey(t) - b) * np.sqrt(cinquenum(t))/(((a - cinquex(t)) ** 2 + (b - cinquey(t)) ** 2 + (c - cinquez(t)) ** 2) ** (2.5)),0, 2*np.pi, n = quadorder)
@@ -425,11 +581,7 @@ def JEentries(a,b,c,knottype):
         phixz = None
         phiyy = None
         phiyz = None
-    return np.array([-1*phixx, -1*phixy, -1*phixz, -1*phiyy, -1*phiyz])
-        
-        
-        
-        
+    return np.array([-1*phixx, -1*phixy, -1*phixz, -1*phiyy, -1*phiyz])        
 
 #Computes Jacobian of the electric field
 def Je(a,b,c,knottype):
@@ -524,7 +676,7 @@ def criticalsearch(knottype, N):
    
 #Create an animation for the evolution of level surfaces
 #Shows the animation of Phi(x) = cmin to Phi(x) = cmax, with specified total of frames, and surface mesh size n   
-def createanim(knottype, cmin, cmax, n, totalframes, colorscale = 'inferno'):
+def createanim(knottype, cmin, cmax, n, totalframes, colorscale = 'inferno', duration = 15):
     verts = []
     faces = []
     steplength = (cmax - cmin) / totalframes
@@ -534,7 +686,7 @@ def createanim(knottype, cmin, cmax, n, totalframes, colorscale = 'inferno'):
         knottypes = [knottype] * totalframes
         ns = [n] * totalframes
         cs = [cmin + i * steplength for i in range(totalframes)]
-        #results = [executor.submit(generateverts, knottype, n, c=cmin + i * steplength) for i in range(totalframes)]
+
         results = executor.map(generateverts,knottypes,ns,cs)
 
         for f in results:
@@ -566,7 +718,7 @@ def createanim(knottype, cmin, cmax, n, totalframes, colorscale = 'inferno'):
                 type="buttons",
                 buttons=[dict(label="Play",
                               method="animate",
-                              args=[None, {"frame": {"duration": 15}}]),
+                              args=[None, {"frame": {"duration": duration}}]),
                          dict(label = "Pause",
                               method = "animate",
                               args = [[None], {"frame": {"duration": 0, "redraw": False},
